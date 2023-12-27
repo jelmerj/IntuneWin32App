@@ -16,11 +16,12 @@ function Remove-IntuneWin32App {
         Author:      Nickolaj Andersen & Christof Van Geendertaelen
         Contact:     @NickolajA & @cvangeendert
         Created:     2021-04-02
-        Updated:     2021-08-31
+        Updated:     2023-09-04
 
         Version history:
         1.0.0 - (2021-04-02) Function created
         1.0.1 - (2021-08-31) Updated to use new authentication header
+        1.0.2 - (2023-09-04) Updated with Test-AccessToken function
     #>
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(

@@ -12,6 +12,12 @@ function Connect-MSIntuneGraph {
     .PARAMETER ClientID
         Application ID (Client ID) for an Azure AD service principal. Uses by default the 'Microsoft Intune PowerShell' service principal Application ID.
 
+    .PARAMETER ClientSecret
+        Application secret (Client Secret) for an Azure AD service principal.
+
+    .PARAMETER ClientCert
+        A Certificate object (not just thumbprint) representing the client certificate for an Azure AD service principal.
+
     .PARAMETER RedirectUri
         Specify the Redirect URI (also known as Reply URL) of the custom Azure AD service principal.
 
@@ -28,22 +34,40 @@ function Connect-MSIntuneGraph {
         Author:      Nickolaj Andersen
         Contact:     @NickolajA
         Created:     2021-08-31
-        Updated:     2021-08-31
+        Updated:     2022-09-03
 
         Version history:
         1.0.0 - (2021-08-31) Script created
+        1.0.1 - (2022-03-28) Added ClientSecret parameter input to support client secret auth flow
+        1.0.2 - (2022-09-03) Added new global variable to hold the tenant id passed as parameter input for access token refresh scenario
+        1.0.3 - (2023-04-07) Added support for client certificate auth flow (thanks to apcsb)
     #>
     [CmdletBinding(DefaultParameterSetName = "Interactive")]
     param(
         [parameter(Mandatory = $true, ParameterSetName = "Interactive", HelpMessage = "Specify the tenant name or ID, e.g. tenant.onmicrosoft.com or <GUID>.")]
         [parameter(Mandatory = $true, ParameterSetName = "DeviceCode")]
+        [parameter(Mandatory = $true, ParameterSetName = "ClientSecret")]
+        [parameter(Mandatory = $true, ParameterSetName = "ClientCert")]
         [ValidateNotNullOrEmpty()]
         [string]$TenantID,
         
         [parameter(Mandatory = $false, ParameterSetName = "Interactive", HelpMessage = "Application ID (Client ID) for an Azure AD service principal. Uses by default the 'Microsoft Intune PowerShell' service principal Application ID.")]
         [parameter(Mandatory = $false, ParameterSetName = "DeviceCode")]
+        [parameter(Mandatory = $true, ParameterSetName = "ClientSecret")]
+        [parameter(Mandatory = $true, ParameterSetName = "ClientCert")]
         [ValidateNotNullOrEmpty()]
-        [string]$ClientID = "d1ddf0e4-d672-4dae-b554-9d5bdfd93547",
+        [string]$ClientID,
+
+        [parameter(Mandatory = $false, HelpMessage = "Application secret (Client Secret) for an Azure AD service principal.")]
+        [parameter(Mandatory = $true, ParameterSetName = "ClientSecret")]
+        [ValidateNotNullOrEmpty()]
+        [string]$ClientSecret,
+
+        [parameter(Mandatory = $false, HelpMessage = "A Certificate object (not just thumbprint) representing the client certificate for an Azure AD service principal.")]
+        [parameter(Mandatory = $true, ParameterSetName = "ClientCert")]
+        [ValidateNotNullOrEmpty()]
+        [System.Security.Cryptography.X509Certificates.X509Certificate2]$ClientCert,
+
 
         [parameter(Mandatory = $false, ParameterSetName = "Interactive", HelpMessage = "Specify the Redirect URI (also known as Reply URL) of the custom Azure AD service principal.")]
         [parameter(Mandatory = $false, ParameterSetName = "DeviceCode")]
@@ -62,30 +86,32 @@ function Connect-MSIntuneGraph {
     )
     Begin {
         # Determine the correct RedirectUri (also known as Reply URL) to use with MSAL.PS
-        if ($ClientID -like "d1ddf0e4-d672-4dae-b554-9d5bdfd93547") {
-            $RedirectUri = "urn:ietf:wg:oauth:2.0:oob"
-        }
-        else {
-            if (-not([string]::IsNullOrEmpty($ClientID))) {
-                Write-Verbose -Message "Using custom Azure AD service principal specified with Application ID: $($ClientID)"
+        if (-not([string]::IsNullOrEmpty($ClientID))) {
+            Write-Verbose -Message "Using custom Azure AD service principal specified with Application ID: $($ClientID)"
 
-                # Adjust RedirectUri parameter input in case non was passed on command line
-                if ([string]::IsNullOrEmpty($RedirectUri)) {
-                    switch -Wildcard ($PSVersionTable["PSVersion"]) {
-                        "5.*" {
-                            $RedirectUri = "https://login.microsoftonline.com/common/oauth2/nativeclient"
-                        }
-                        "7.*" {
-                            $RedirectUri = "http://localhost"
-                        }
+            # Adjust RedirectUri parameter input in case non was passed on command line
+            if ([string]::IsNullOrEmpty($RedirectUri)) {
+                switch -Wildcard ($PSVersionTable["PSVersion"]) {
+                    "5.*" {
+                        $RedirectUri = "https://login.microsoftonline.com/common/oauth2/nativeclient"
+                    }
+                    "7.*" {
+                        $RedirectUri = "http://localhost"
                     }
                 }
             }
         }
-        Write-Verbose -Message "Using RedirectUri with value: $($RedirectUri)"
+        else {
+            # Define static variables
+            $ClientID = "d1ddf0e4-d672-4dae-b554-9d5bdfd93547"
+            $RedirectUri = "urn:ietf:wg:oauth:2.0:oob"
 
-        # Set default error action preference configuration
-        $ErrorActionPreference = "Stop"
+            Write-Verbose -Message "Using the default 'Microsoft Intune PowerShell' service principal with Application ID: $($ClientID)"
+            Write-Verbose -Message "Using RedirectUri with value: $($RedirectUri)"
+
+            # Set default error action preference configuration
+            $ErrorActionPreference = "Stop"
+        }
     }
     Process {
         Write-Verbose -Message "Using authentication flow: $($PSCmdlet.ParameterSetName)"
@@ -93,8 +119,8 @@ function Connect-MSIntuneGraph {
         try {
             # Construct table with common parameter input for Get-MsalToken cmdlet
             $AccessTokenArguments = @{
-                "TenantId" = $TenantID
-                "ClientId" = $ClientID
+                "TenantId"    = $TenantID
+                "ClientId"    = $ClientID
                 "RedirectUri" = $RedirectUri
                 "ErrorAction" = "Stop"
             }
@@ -113,10 +139,14 @@ function Connect-MSIntuneGraph {
                     }
                 }
                 "ClientSecret" {
-                    if ($PSBoundParameters["Refresh"]) {
-                        $AccessTokenArguments.Add("ForceRefresh", $true)
-                    }
+                    Write-Verbose "Using clientSecret"
+                    $AccessTokenArguments.Add("ClientSecret", $(ConvertTo-SecureString $clientSecret -AsPlainText -Force))
                 }
+                "ClientCert" {
+                    Write-Verbose "Using clientCert"
+                    $AccessTokenArguments.Add("ClientCertificate", $ClientCert)
+                }
+
             }
 
             # Dynamically add parameter input for Get-MsalToken based on command line input
@@ -124,7 +154,7 @@ function Connect-MSIntuneGraph {
                 $AccessTokenArguments.Add("Interactive", $true)
             }
             if ($PSBoundParameters["DeviceCode"]) {
-                if (-not($PSBoundParameters["Refresh"])){
+                if (-not($PSBoundParameters["Refresh"])) {
                     $AccessTokenArguments.Add("DeviceCode", $true)
                 }
             }
@@ -132,6 +162,7 @@ function Connect-MSIntuneGraph {
             try {
                 # Attempt to retrieve or refresh an access token
                 $Global:AccessToken = Get-MsalToken @AccessTokenArguments
+                $Global:AccessTokenTenantID = $TenantID
                 Write-Verbose -Message "Successfully retrieved access token"
                 
                 try {

@@ -16,10 +16,11 @@ function New-IntuneWin32AppDependency {
         Author:      Nickolaj Andersen
         Contact:     @NickolajA
         Created:     2021-08-31
-        Updated:     2021-08-31
+        Updated:     2023-09-04
 
         Version history:
         1.0.0 - (2021-08-31) Function created
+        1.0.1 - (2023-09-04) Updated with Test-AccessToken function
     #>
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
