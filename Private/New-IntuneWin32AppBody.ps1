@@ -42,6 +42,9 @@ function New-IntuneWin32AppBody {
     .PARAMETER CompanyPortalFeaturedApp
         Specify the featured in Company Portal property for the Win32 application body.
 
+    .PARAMETER CategoryList
+        Provide an ArrayList containing the categories for the Win32 application body.
+
     .PARAMETER FileName
         Specify the file name (e.g. name.intunewin) for the Win32 application body.
 
@@ -54,11 +57,26 @@ function New-IntuneWin32AppBody {
     .PARAMETER RestartBehavior
         Specify the installation experience for the Win32 application body.
 
+    .PARAMETER MaximumInstallationTimeInMinutes
+        Specify the maximum installation time in minutes for the Win32 application body.        
+
+    .PARAMETER AllowAvailableUninstall
+        Specify to allow the uninstall option when assigned as available of the Win32 application body.
+
     .PARAMETER RequirementRule
         Specify the requirement rules for the Win32 application body.
 
     .PARAMETER Icon
         Provide a Base64 encoded string as icon for the Win32 application body.
+
+    .PARAMETER ScopeTagList
+        Provide an ArrayList containing the Scope Tag ids for the Win32 application body.
+
+    .PARAMETER AssignmentFilterID
+        Specify the assignment filter id for the Win32 application body.
+
+    .PARAMETER AssignmentFilterType
+        Specify the assignment filter type for the Win32 application body.
 
     .PARAMETER InstallCommandLine
         Specify the install command line for the Win32 application body.
@@ -88,13 +106,19 @@ function New-IntuneWin32AppBody {
         Author:      Nickolaj Andersen
         Contact:     @NickolajA
         Created:     2020-01-04
-        Updated:     2021-08-31
+        Updated:     2023-03-17
 
         Version history:
         1.0.0 - (2020-01-04) Function created
         1.0.1 - (2020-01-27) Added support for RequirementRule parameter input
         1.0.2 - (2020-09-20) Added support for Owner, Notes, InformationURL, PrivacyURL and CompanyPortalFeaturedApp parameter inputs
         1.0.3 - (2021-08-31) Added AppVersion optional parameter
+        1.0.3 - (2022-09-02) minimumSupportedOperatingSystem property is replaced by minimumSupportedWindowsRelease
+                             Fixed a bug where minimumFreeDiskSpaceInMB, minimumMemoryInMB, minimumNumberOfProcessors and minimumCpuSpeedInMHz
+                             would never contain any value since they're not handled by this function (https://github.com/MSEndpointMgr/IntuneWin32App/issues/44)
+        1.0.4 - (2023-01-20) Added requirement rule to both MSI and EXE switch statements, now handled dynamically based on what's present in the requirement rule object.
+                             Added ScopeTagList and CategoryList parameters.
+        1.0.4 - (2023-03-17) Added AllowAvailableUninstall parameter switch. Improved handling of RequirementRule when not passed on the command line.
     #>
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -147,6 +171,11 @@ function New-IntuneWin32AppBody {
         [parameter(Mandatory = $false, ParameterSetName = "EXE")]
         [bool]$CompanyPortalFeaturedApp = $false,
 
+        [parameter(Mandatory = $false, ParameterSetName = "MSI", HelpMessage = "Provide an ArrayList containing the categories for the Win32 application body.")]
+        [parameter(Mandatory = $false, ParameterSetName = "EXE")]
+        [ValidateNotNullOrEmpty()]
+        [System.Collections.ArrayList]$CategoryList,
+
         [parameter(Mandatory = $true, ParameterSetName = "MSI", HelpMessage = "Specify the file name (e.g. name.intunewin) for the Win32 application body.")]
         [parameter(Mandatory = $true, ParameterSetName = "EXE")]
         [ValidateNotNullOrEmpty()]
@@ -169,6 +198,16 @@ function New-IntuneWin32AppBody {
         [ValidateSet("allow", "basedOnReturnCode", "suppress", "force")]
         [string]$RestartBehavior,
 
+        [parameter(Mandatory = $true, ParameterSetName = "MSI", HelpMessage = "Specify the maximum installation time in minutes for the Win32 application body.")]
+        [parameter(Mandatory = $true, ParameterSetName = "EXE")]
+        [ValidateNotNullOrEmpty()]
+        [int]$MaximumInstallationTimeInMinutes,
+
+        [parameter(Mandatory = $false, ParameterSetName = "MSI", HelpMessage = "Specify to allow the uninstall option when assigned as available of the Win32 application body.")]
+        [parameter(Mandatory = $false, ParameterSetName = "EXE")]
+        [ValidateNotNullOrEmpty()]
+        [switch]$AllowAvailableUninstall,
+
         [parameter(Mandatory = $false, ParameterSetName = "MSI", HelpMessage = "Specify the requirement rules for the Win32 application body.")]
         [parameter(Mandatory = $false, ParameterSetName = "EXE")]
         [ValidateNotNullOrEmpty()]
@@ -178,6 +217,11 @@ function New-IntuneWin32AppBody {
         [parameter(Mandatory = $false, ParameterSetName = "EXE")]
         [ValidateNotNullOrEmpty()]
         [string]$Icon,
+
+        [parameter(Mandatory = $false, ParameterSetName = "MSI", HelpMessage = "Provide an ArrayList containing the Scope Tag ids for the Win32 application body.")]
+        [parameter(Mandatory = $false, ParameterSetName = "EXE")]
+        [ValidateNotNullOrEmpty()]
+        [System.Collections.ArrayList]$ScopeTagList,
 
         [parameter(Mandatory = $true, ParameterSetName = "EXE", HelpMessage = "Specify the install command line for the Win32 application body.")]
         [ValidateNotNullOrEmpty()]
@@ -210,18 +254,25 @@ function New-IntuneWin32AppBody {
 
         [parameter(Mandatory = $true, ParameterSetName = "MSI", HelpMessage = "Specify the MSI upgrade code for the Win32 application body.")]
         [ValidateNotNullOrEmpty()]
-        [string]$MSIUpgradeCode
+        [string]$MSIUpgradeCode,
+
+        [parameter(Mandatory = $false, ParameterSetName = "MSI", HelpMessage = "Specify to enforce the MSI installer to run silently, with /quiet added to the install command line of the Win32 application body.")]
+        [ValidateNotNullOrEmpty()]
+        [switch]$UnattendedInstall,
+
+        [parameter(Mandatory = $false, ParameterSetName = "MSI", HelpMessage = "Specify to enforce the MSI installer to run silently, with /quiet added to the uninstall command line of the Win32 application body.")]
+        [ValidateNotNullOrEmpty()]
+        [switch]$UnattendedUninstall
     )
     # Determine values for requirement rules
     if ($PSBoundParameters["RequirementRule"]) {
+        # Define required requirement rules propertoes
         $ApplicableArchitectures = $RequirementRule["applicableArchitectures"]
-        $MinimumSupportedOperatingSystem = $RequirementRule["minimumSupportedOperatingSystem"]
+        $MinimumSupportedWindowsRelease = $RequirementRule["minimumSupportedWindowsRelease"]
     }
     else {
         $ApplicableArchitectures = "x64,x86"
-        $MinimumSupportedOperatingSystem = @{
-            "v10_1607" = $true
-        }
+        $MinimumSupportedWindowsRelease = "2H20"
     }
 
     switch ($PSCmdlet.ParameterSetName) {
@@ -240,13 +291,12 @@ function New-IntuneWin32AppBody {
                 "displayName" = $DisplayName
                 "fileName" = $FileName
                 "setupFilePath" = $SetupFileName
-                "installCommandLine" = "msiexec.exe /i `"$SetupFileName`""
-                "uninstallCommandLine" = "msiexec.exe /x `"$MSIProductCode`""
                 "installExperience" = @{
                     "runAsAccount" = $InstallExperience
                     "deviceRestartBehavior" = $RestartBehavior
+                    "maxRunTimeInMinutes" = $MaximumInstallationTimeInMinutes
                 }
-                "minimumSupportedOperatingSystem" = $MinimumSupportedOperatingSystem
+                "minimumSupportedWindowsRelease" = $MinimumSupportedWindowsRelease
                 "msiInformation" = @{
                     "packageType" = $MSIInstallPurpose
                     "productCode" = $MSIProductCode
@@ -260,12 +310,57 @@ function New-IntuneWin32AppBody {
                 "runAs32bit" = $false
             }
 
+            # Handle unattended/interactive install and uninstall command lines
+            if ($UnattendedInstall) {
+                $Win32AppBody.Add("installCommandLine", "msiexec.exe /i `"$SetupFileName`" /quiet")
+            }
+            else {
+                $Win32AppBody.Add("installCommandLine", "msiexec.exe /i `"$SetupFileName`"")
+            }
+            if ($UnattendedUninstall) {
+                $Win32AppBody.Add("uninstallCommandLine", "msiexec.exe /x `"$MSIProductCode`" /quiet")
+            }
+            else {
+                $Win32AppBody.Add("uninstallCommandLine", "msiexec.exe /x `"$MSIProductCode`"")
+            }
+
+            # Add requirement rule items dynamically
+            if ($PSBoundParameters["RequirementRule"]) {
+                if ($RequirementRule["minimumFreeDiskSpaceInMB"]) {
+                    $Win32AppBody.Add("minimumFreeDiskSpaceInMB", $RequirementRule["minimumFreeDiskSpaceInMB"])
+                }
+                if ($RequirementRule["minimumMemoryInMB"]) {
+                    $Win32AppBody.Add("minimumMemoryInMB", $RequirementRule["minimumMemoryInMB"])
+                }
+                if ($RequirementRule["minimumNumberOfProcessors"]) {
+                    $Win32AppBody.Add("minimumNumberOfProcessors", $RequirementRule["minimumNumberOfProcessors"])
+                }
+                if ($RequirementRule["minimumCpuSpeedInMHz"]) {
+                    $Win32AppBody.Add("minimumCpuSpeedInMHz", $RequirementRule["minimumCpuSpeedInMHz"])
+                }
+            }
+
             # Add icon property if passed on command line
             if ($PSBoundParameters["Icon"]) {
                 $Win32AppBody.Add("largeIcon", @{
                     "type" = "image/png"
                     "value" = $Icon
                 })
+            }
+
+            # Add Scope Tags if passed on command line
+            if ($PSBoundParameters["ScopeTagList"]) {
+                $Win32AppBody.Add("roleScopeTagIds", @($ScopeTagList))
+            }
+
+            # Add categories if passed on the command line
+            if ($PSBoundParameters["CategoryList"]) {
+                $Win32AppBody.Add("categories", @($CategoryList))
+            }
+
+            # Add allow available uninstall option if passed on the command line
+            if ($PSBoundParameters["AllowAvailableUninstall"]) {
+                $Win32AppBody.Add("allowAvailableUninstall", $true)
             }
         }
         "EXE" {
@@ -288,11 +383,28 @@ function New-IntuneWin32AppBody {
                 "installExperience" = @{
                     "runAsAccount" = $InstallExperience
                     "deviceRestartBehavior" = $RestartBehavior
+                    "maxRunTimeInMinutes" = $MaximumInstallationTimeInMinutes
                 }
-                "minimumSupportedOperatingSystem" = $MinimumSupportedOperatingSystem
+                "minimumSupportedWindowsRelease" = $MinimumSupportedWindowsRelease
                 "msiInformation" = $null
                 "publisher" = $Publisher
                 "runAs32bit" = $false
+            }
+
+            # Add requirement rule items dynamically
+            if ($PSBoundParameters["RequirementRule"]) {
+                if ($RequirementRule["minimumFreeDiskSpaceInMB"]) {
+                    $Win32AppBody.Add("minimumFreeDiskSpaceInMB", $RequirementRule["minimumFreeDiskSpaceInMB"])
+                }
+                if ($RequirementRule["minimumMemoryInMB"]) {
+                    $Win32AppBody.Add("minimumMemoryInMB", $RequirementRule["minimumMemoryInMB"])
+                }
+                if ($RequirementRule["minimumNumberOfProcessors"]) {
+                    $Win32AppBody.Add("minimumNumberOfProcessors", $RequirementRule["minimumNumberOfProcessors"])
+                }
+                if ($RequirementRule["minimumCpuSpeedInMHz"]) {
+                    $Win32AppBody.Add("minimumCpuSpeedInMHz", $RequirementRule["minimumCpuSpeedInMHz"])
+                }
             }
 
             # Add icon property if passed on command line
@@ -301,6 +413,21 @@ function New-IntuneWin32AppBody {
                     "type" = "image/png"
                     "value" = $Icon
                 })
+            }
+
+            # Add Scope Tags if passed on command line
+            if ($PSBoundParameters["ScopeTagList"]) {
+                $Win32AppBody.Add("roleScopeTagIds", @($ScopeTagList))
+            }
+
+            # Add categories if passed on the command line
+            if ($PSBoundParameters["CategoryList"]) {
+                $Win32AppBody.Add("categories", @($CategoryList))
+            }
+
+            # Add allow available uninstall option if passed on the command line
+            if ($PSBoundParameters["AllowAvailableUninstall"]) {
+                $Win32AppBody.Add("allowAvailableUninstall", $true)
             }
         }
     }

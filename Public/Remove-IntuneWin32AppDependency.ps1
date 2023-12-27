@@ -13,10 +13,11 @@ function Remove-IntuneWin32AppDependency {
         Author:      Nickolaj Andersen
         Contact:     @NickolajA
         Created:     2021-08-31
-        Updated:     2021-08-31
+        Updated:     2023-09-04
 
         Version history:
         1.0.0 - (2021-08-31) Function created
+        1.0.1 - (2023-09-04) Updated with Test-AccessToken function. Updated to remove dependency configuration and not include supersedence configuration
     #>
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -40,13 +41,17 @@ function Remove-IntuneWin32AppDependency {
         if ($Win32App -ne $null) {
             $Win32AppID = $Win32App.id
 
-            $Win32AppRelationships = [ordered]@{
-                "relationships" = @()
+            # Check for existing supersedence relations for Win32 app, as these relationships should not be removed
+            $Supersedence = Get-IntuneWin32AppSupersedence -ID $Win32AppID
+
+            # Create relationships table using ternary conditional expression to handle empty supersedence relations
+            $Win32AppRelationshipsTable = [ordered]@{
+                "relationships" = if ($Supersedence) { @($Supersedence) } else { $() }
             }
 
             try {
                 # Attempt to call Graph and remove dependency configuration for Win32 app
-                Invoke-IntuneGraphRequest -APIVersion "Beta" -Resource "mobileApps/$($Win32AppID)/updateRelationships" -Method "POST" -Body ($Win32AppRelationships | ConvertTo-Json) -ErrorAction Stop
+                Invoke-IntuneGraphRequest -APIVersion "Beta" -Resource "mobileApps/$($Win32AppID)/updateRelationships" -Method "POST" -Body ($Win32AppRelationshipsTable | ConvertTo-Json) -ErrorAction Stop
             }
             catch [System.Exception] {
                 Write-Warning -Message "An error occurred while removing dependency configuration for Win32 app: $($Win32AppID). Error message: $($_.Exception.Message)"
