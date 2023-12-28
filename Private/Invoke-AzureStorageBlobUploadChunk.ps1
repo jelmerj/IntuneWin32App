@@ -36,6 +36,7 @@ function Invoke-AzureStorageBlobUploadChunk {
 	$ISOEncoding = [System.Text.Encoding]::GetEncoding("iso-8859-1")
 	$EncodedBytes = $ISOEncoding.GetString($Bytes)
 	$Headers = @{
+        "content-type" = "text/plain; charset=iso-8859-1"
 		"x-ms-blob-type" = "BlockBlob"
 	}
 
